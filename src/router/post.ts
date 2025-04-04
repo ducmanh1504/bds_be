@@ -13,12 +13,13 @@ Router.get("/getAllPosts",verifyRole(["Admin"]),paginationMiddleware, PostContro
 Router.put("/:postId/updatePost",uploadCloud.array("images"),verifyRole(["Agent","User"]), PostController.updatePost as any);
 Router.delete("/:postId/deletePost",verifyRole(["Agent"]), PostController.deletePost as any);
 Router.patch("/:postId/approvePost", verifyRole(["Admin"]),PostController.approvePost as any);
-Router.get("/searchPost",PostController.searchPost as any);
+Router.get("/searchPost",paginationMiddleware,PostController.searchPost as any);
 
 //get post
 Router.get("/getPostClient",paginationMiddleware, PostController.getAllPostForClient as any);
 Router.get("/getPostOutstanding", PostController.getPostOutstanding as any);
 Router.get("/getPostHabit", verifyRole(["Agent","User"]),PostController.getPostHabit as any);
+Router.get("/filterPost", paginationMiddleware,PostController.filterPost as any);
 
 //post draft
 Router.post("/createPostDraft",uploadCloud.array("images"),validateCreatePostDraft,verifyRole(["Agent","User"]), PostDraftController.create as any);

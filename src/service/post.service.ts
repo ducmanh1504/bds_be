@@ -134,78 +134,75 @@ class PostService {
     }
     return post;
   }
-	static async getPost(slug: string) {
-		const cachePost = await CacheRepository.get(`post:${slug}`);
-		if (cachePost) {
-			return JSON.parse(cachePost);
-		}
-	
-		const post = await Post.findOne({
-			where: { slug },
-			include: [
-				{
-					model: User,
-					attributes: ['id', 'fullname', 'email', 'phone', 'avatar'],
-				},
-				{
-					model: Image,
-					attributes: ['image_url'],
-				},
-				{
-					model: TagPost,
-					attributes: ['id'],
-					include: [
-						{
-							model: Tag,
-							attributes: ['tagName'],
-						},
-					],
-				},
-			],
-		});
-	
-		if (!post) {
-			throw new NotFoundError('Không tìm thấy bài đăng');
-		}
-		const postCount = await Post.count({
-			where: { userId: post.userId },
-		});
-	
-		const priceHistory = await PostHistory.findAll({
-			where: { postId: post.id },
-			attributes: ['price', 'changedAt'],
-			order: [['changedAt', 'ASC']],
-		});
-	
-		const uniquePriceHistory = priceHistory
-			.filter((history, index, self) =>
-				index === self.findIndex((h) => h.price === history.price)
-			)
-			.map((history) => ({
-				price: history.price,
-				changed_at: history.changedAt,
-			}));
-	
-		if (!uniquePriceHistory.some((h) => h.price === post.price)) {
-			uniquePriceHistory.push({
-				price: post.price,
-				changed_at: post.updatedAt || new Date(),
-			});
-		}
-	
-		const postWithPriceHistory = {
-			...post.toJSON(),
-			user: {
-				...post.user.toJSON(),
-				postCount,
-			},
-			priceHistory: uniquePriceHistory,
-		};
-	
-		await CacheRepository.set(`post:${slug}`, postWithPriceHistory, 300);
-		return postWithPriceHistory;
-	}
+  static async getPost(slug: string) {
+    const cachePost = await CacheRepository.get(`post:${slug}`);
+    if (cachePost) {
+      return JSON.parse(cachePost);
+    }
 
+    const post = await Post.findOne({
+      where: { slug },
+      include: [
+        {
+          model: User,
+          attributes: ['id', 'fullname', 'email', 'phone', 'avatar'],
+        },
+        {
+          model: Image,
+          attributes: ['image_url'],
+        },
+        {
+          model: TagPost,
+          attributes: ['id'],
+          include: [
+            {
+              model: Tag,
+              attributes: ['tagName'],
+            },
+          ],
+        },
+      ],
+    });
+
+    if (!post) {
+      throw new NotFoundError('Không tìm thấy bài đăng');
+    }
+    const postCount = await Post.count({
+      where: { userId: post.userId },
+    });
+
+    const priceHistory = await PostHistory.findAll({
+      where: { postId: post.id },
+      attributes: ['price', 'changedAt'],
+      order: [['changedAt', 'ASC']],
+    });
+
+    const uniquePriceHistory = priceHistory
+      .filter((history, index, self) => index === self.findIndex((h) => h.price === history.price))
+      .map((history) => ({
+        price: history.price,
+        changed_at: history.changedAt,
+      }));
+
+    if (!uniquePriceHistory.some((h) => h.price === post.price)) {
+      uniquePriceHistory.push({
+        price: post.price,
+        changed_at: post.updatedAt || new Date(),
+      });
+    }
+
+    const postWithPriceHistory = {
+      ...post.toJSON(),
+      user: {
+        ...post.user.toJSON(),
+        postCount,
+      },
+      priceHistory: uniquePriceHistory,
+    };
+
+    await CacheRepository.set(`post:${slug}`, postWithPriceHistory, 300);
+    return postWithPriceHistory;
+  }
 
   static async deletePost(postId: string, userId: string) {
     const transaction = await sequelize.transaction();
@@ -360,18 +357,36 @@ class PostService {
     return postHistory;
   }
 
-  static async searchPosts(keyword: string, addresses: string[], page: number = 1, limit: number = 10) {
+  static async searchPosts(addresses: string[], page: number = 1, limit: number = 10, offset: number) {
     if (addresses.length > 5) {
       addresses = addresses.slice(0, 5);
     }
-    const offset = (page - 1) * limit;
     const { count, rows } = await Post.findAndCountAll({
       where: {
         [Op.and]: [
-          keyword ? { title: { [Op.iLike]: `%${keyword}%` } } : {},
-          addresses.length > 0 ? { address: { [Op.in]: addresses } } : {},
+          addresses.length > 0
+            ? {
+                [Op.or]: addresses.map((addr) => ({
+                  address: { [Op.like]: `%${addr}%` },
+                })),
+              }
+            : {},
         ],
       },
+      include: [
+        { model: Image, attributes: ['image_url'] },
+        {
+          model: PropertyType,
+          attributes: ['name'],
+          include: [
+            {
+              model: ListingType,
+              attributes: ['listingType'],
+            },
+          ],
+        },
+        { model: User, attributes: ['fullname', 'id', 'phone'] },
+      ],
       limit,
       offset,
       order: [['createdAt', 'DESC']],
@@ -514,73 +529,70 @@ class PostService {
     return posts;
   }
 
-	static async getPostHabit(userId: string, limit: number = 10) {
-		const cacheKey = `post_habit_${userId}`;
-		const cachedData = await CacheRepository.get(cacheKey);
-		if (cachedData) {
-			return JSON.parse(cachedData);
-		}
-	
-		const userViews = await UserView.findAll({ where: { userId }, attributes: ['postId'] });
-		const userWishlists = await Wishlist.findAll({ where: { userId }, attributes: ['postId'] });
-		const userComments = await Comment.findAll({ where: { userId }, attributes: ['postId'] });
-		const interactedPostIds: string[] = [
-			...new Set([
-				...userViews.map(v => String(v.postId)), 
-				...userWishlists.map(w => String(w.postId)), 
-				...userComments.map(c => String(c.postId)),
-			]),
-		];
-		
-	
-		if (interactedPostIds.length === 0) {
-			const defaultPosts = await PostService.getDefaultRecommendations(limit);
-			await CacheRepository.set(cacheKey, defaultPosts, 300);
-			return defaultPosts;
-		}
-	
-		const interactedPosts = await Post.findAll({
-			where: { id: { [Op.in]: interactedPostIds } },
-			include: [{ model: PropertyType, attributes: ['name'] }],
-		});
-	
-		const contentScores = await PostService.calculateContentBasedScores(interactedPosts);
-	
-		const collabScores = await PostService.calculateCollaborativeScores(userId, interactedPostIds);
-	
-		const posts = await Post.findAll({
-			attributes: ['id', 'title', 'slug', 'price', 'squareMeters', 'address', 'createdAt', 'priority'],
-			include: [
-				{ model: Image, attributes: ['image_url'], limit: 1 },
-				{ model: PropertyType, attributes: ['name'] },
-			],
-			where: {
-				verified: true,
-				status: { [Op.ne]: 'Đã bàn giao' },
-				expiredDate: { [Op.gte]: new Date() },
-				id: { [Op.notIn]: interactedPostIds },
-			},
-		});
-	
-		const now = Date.now();
-		posts.forEach(post => {
-			const contentScore = contentScores[post.id] || 0;
-			const collabScore = collabScores[post.id] || 0;
-			const ageInDays = (now - post.createdAt.getTime()) / (1000 * 60 * 60 * 24);
-			const decayFactor = Math.exp(-0.05 * ageInDays);
-			(post as any).score = (contentScore * 0.4) + (collabScore * 0.4) + (post.priority * 0.2) * decayFactor;
-		});
-	
-		const topPosts = posts
-			.sort((a, b) => (b as any).score - (a as any).score)
-			.slice(0, limit);
-	
-		if (topPosts.length > 0) {
-			await CacheRepository.set(cacheKey, topPosts, 300);
-		}
-	
-		return topPosts;
-	}
+  static async getPostHabit(userId: string, limit: number = 10) {
+    const cacheKey = `post_habit_${userId}`;
+    const cachedData = await CacheRepository.get(cacheKey);
+    if (cachedData) {
+      return JSON.parse(cachedData);
+    }
+
+    const userViews = await UserView.findAll({ where: { userId }, attributes: ['postId'] });
+    const userWishlists = await Wishlist.findAll({ where: { userId }, attributes: ['postId'] });
+    const userComments = await Comment.findAll({ where: { userId }, attributes: ['postId'] });
+    const interactedPostIds: string[] = [
+      ...new Set([
+        ...userViews.map((v) => String(v.postId)),
+        ...userWishlists.map((w) => String(w.postId)),
+        ...userComments.map((c) => String(c.postId)),
+      ]),
+    ];
+
+    if (interactedPostIds.length === 0) {
+      const defaultPosts = await PostService.getDefaultRecommendations(limit);
+      await CacheRepository.set(cacheKey, defaultPosts, 300);
+      return defaultPosts;
+    }
+
+    const interactedPosts = await Post.findAll({
+      where: { id: { [Op.in]: interactedPostIds } },
+      include: [{ model: PropertyType, attributes: ['name'] }],
+    });
+
+    const contentScores = await PostService.calculateContentBasedScores(interactedPosts);
+
+    const collabScores = await PostService.calculateCollaborativeScores(userId, interactedPostIds);
+
+    const posts = await Post.findAll({
+      attributes: ['id', 'title', 'slug', 'price', 'squareMeters', 'address', 'createdAt', 'priority'],
+      include: [
+        { model: Image, attributes: ['image_url'], limit: 1 },
+        { model: PropertyType, attributes: ['name'] },
+      ],
+      where: {
+        verified: true,
+        status: { [Op.ne]: 'Đã bàn giao' },
+        expiredDate: { [Op.gte]: new Date() },
+        id: { [Op.notIn]: interactedPostIds },
+      },
+    });
+
+    const now = Date.now();
+    posts.forEach((post) => {
+      const contentScore = contentScores[post.id] || 0;
+      const collabScore = collabScores[post.id] || 0;
+      const ageInDays = (now - post.createdAt.getTime()) / (1000 * 60 * 60 * 24);
+      const decayFactor = Math.exp(-0.05 * ageInDays);
+      (post as any).score = contentScore * 0.4 + collabScore * 0.4 + post.priority * 0.2 * decayFactor;
+    });
+
+    const topPosts = posts.sort((a, b) => (b as any).score - (a as any).score).slice(0, limit);
+
+    if (topPosts.length > 0) {
+      await CacheRepository.set(cacheKey, topPosts, 300);
+    }
+
+    return topPosts;
+  }
 
   private static async calculateContentBasedScores(interactedPosts: Post[]) {
     const scores: { [postId: string]: number } = {};
@@ -624,7 +636,7 @@ class PostService {
       ...new Set(
         similarInteractions
           .flat()
-					.map((i) => String(i.postId))
+          .map((i) => String(i.postId))
           .filter((id) => !interactedPostIds.includes(id)),
       ),
     ];
@@ -667,6 +679,107 @@ class PostService {
       limit,
     });
   }
+	static async filterPosts(query: any, page: number = 1, limit: number = 10, offset: number) {
+		const {
+			keyword, tagIds, minPrice, maxPrice, floor, minSquareMeters, maxSquareMeters,
+			directions, bedrooms, bathrooms, propertyTypeIds, listingTypeIds, sortBy, order
+		} = query;
+		const toArray = <T>(value: any, parser: (v: any) => T): T[] => {
+			if (!value) return [];
+			if (Array.isArray(value)) return value.map(parser);
+			return [parser(value)];
+		};
+		const whereCondition: any = {};
+		if (keyword) {
+			whereCondition[Op.or] = [
+				{ title: { [Op.like]: `%${keyword}%` } },
+				{ description: { [Op.like]: `%${keyword}%` } },
+				{ address: { [Op.like]: `%${keyword}%` } },
+			];
+		}
+		if (minPrice || maxPrice) {
+			whereCondition.price = {
+				...(minPrice ? { [Op.gte]: Number(minPrice) } : {}),
+				...(maxPrice ? { [Op.lte]: Number(maxPrice) } : {}),
+			};
+		}
+		if (minSquareMeters || maxSquareMeters) {
+			whereCondition.squareMeters = {
+				...(minSquareMeters ? { [Op.gte]: Number(minSquareMeters) } : {}),
+				...(maxSquareMeters ? { [Op.lte]: Number(maxSquareMeters) } : {}),
+			};
+		}
+		const directionArray = toArray(directions,String);
+		if (directionArray.length > 0) {
+			whereCondition.direction = { [Op.in]: directionArray };
+		}
+		const bedroomArray = toArray(bedrooms,Number);
+		if (bedroomArray.length > 0) {
+			whereCondition.bedroom = { [Op.in]: bedroomArray };
+		}
+		const bathroomArray = toArray(bathrooms,Number);
+		if (bathroomArray.length > 0) {
+			whereCondition.bathroom = { [Op.in]: bathroomArray };
+		}
+		if (floor) {
+			whereCondition.floor = Number(floor);
+		}
+		const includeConditions: any = [
+			{ model: Image, attributes: ['image_url'] },
+			{ model: User, attributes: ['fullname', 'id', 'phone'] },
+		];
+		const tagIdArray = toArray(tagIds,String);
+		if (tagIdArray.length > 0) {
+			includeConditions.push({
+				model: TagPost,
+				where: { tagId: { [Op.in]: tagIdArray } },
+				required: true,
+			});
+		}
+		const propertyTypeIdArray = toArray(propertyTypeIds,String);
+		if (propertyTypeIdArray.length > 0) {
+			includeConditions.push({
+				model: PropertyType,
+				where: { id: { [Op.in]: propertyTypeIdArray } },
+				required: true,
+			});
+		}
+		const listingTypeIdArray = toArray(listingTypeIds,String);
+		if (listingTypeIdArray.length > 0) {
+			includeConditions.push({
+				model: PropertyType,
+				include: [
+					{
+						model: ListingType,
+						where: { id: { [Op.in]: listingTypeIdArray } },
+						required: true,
+					},
+				],
+			});
+		}
+		let orderCondition: any = [['createdAt', 'DESC']];
+		if (sortBy) {
+			const orderType = order === 'asc' ? 'ASC' : 'DESC';
+			orderCondition = [[sortBy, orderType]];
+		}
+		const { count, rows } = await Post.findAndCountAll({
+			where: whereCondition,
+			include: includeConditions,
+			limit,
+			offset: offset || (page-1)*limit,
+			order: orderCondition,
+			distinct: true
+		});
+	
+		return {
+			total: count,
+			posts: rows,
+			page,
+			totalPages: Math.ceil(count / limit),
+		};
+	}
+
+
 }
 
 export default PostService;
