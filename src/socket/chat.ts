@@ -1,44 +1,53 @@
-import { Socket } from 'socket.io';
-import { ChatService } from '@service';
+import User from '@models/user.model';
+import { Server, Socket } from 'socket.io';
 
-export const chatSocket = (io: any) => {
-  io.on('connection', (socket: Socket) => {
-    console.log(` Chat client connected: ${socket.id}`);
+export const chatSocket = (io: Server) => {
+  const onlineUsers = new Map();
 
-    socket.on('chatMessage', async (data: { content: string }) => {
-      try {
-        const { content } = data;
-        if (!content) {
-          socket.emit('chatResponse', { message: 'Nội dung tin nhắn không được để trống', posts: [] });
-          return;
-        }
-        const conditions = await ChatService.parseUserRequest(content);
-        const isEmptyConditions = Object.keys(conditions).length === 0 || 
-          Object.values(conditions).every(value => value === null || value === undefined);
-        if (isEmptyConditions) {
-          socket.emit('chatResponse', { 
-            message: 'Tôi không hiểu yêu cầu của bạn. Vui lòng cung cấp thông tin rõ ràng hơn về bất động sản bạn muốn tìm!', 
-            posts: [] 
-          });
-          return;
-        }
-        const posts = await ChatService.getPostsByConditions(conditions);
-        const responseMessage = posts.length > 0 
-          ? 'Danh sách bài đăng phù hợp:' 
-          : 'Không tìm thấy bài đăng nào phù hợp.';
-        
-        socket.emit('chatResponse', {
-          posts: Array.isArray(posts) ? posts.map((post: any) => post.toJSON()) : [],
-          message: responseMessage,
-        });
-      } catch (error) {
-        console.error('Error in chat:', error);
-        socket.emit('chatResponse', { message: 'Có lỗi xảy ra', posts: [] });
-      }
+  io.on('connection', (socket) => {
+    socket.on('joinChatConversation', async (userId) => {
+      console.log(`User ${userId} connected`);
+      (socket as any).userId = userId;
+      socket.join(userId);
+      onlineUsers.set(userId, socket.id);
+      await User.update({ lastActive: new Date() }, { where: { id: userId } });
+      const users = await User.findAll({ attributes: ['id', 'lastActive'] });
+      const userStatusList = users.map((user) => ({
+        userId: user.id,
+        active: onlineUsers.has(user.id),
+        lastActive: user.lastActive ? user.lastActive.toISOString() : null,
+      }));
+      socket.emit('allUserStatus', userStatusList);
+      io.emit('userStatusUpdate', {
+        userId,
+        active: true,
+        lastActive: new Date().toISOString(),
+      });
     });
 
-    socket.on('disconnect', () => {
-      console.log(` Chat client disconnected: ${socket.id}`);
+    socket.on('getUserStatus', async (targetUserId) => {
+      const targetUser = await User.findByPk(targetUserId, { attributes: ['id', 'lastActive'] });
+      if (targetUser) {
+        const isActive = onlineUsers.has(targetUser.id);
+        socket.emit('userStatus', {
+          userId: targetUser.id,
+          active: isActive,
+          lastActive: targetUser.lastActive ? targetUser.lastActive.toISOString() : null,
+        });
+      }
+    });
+    
+    socket.on('disconnect', async () => {
+      if ((socket as any).userId) {
+        console.log(`User ${(socket as any).userId} disconnected`);
+        await User.update({ lastActive: new Date() }, { where: { id: (socket as any).userId } });
+        onlineUsers.delete((socket as any).userId);
+        io.emit('userStatusUpdate', {
+          userId: (socket as any).userId,
+          active: false,
+          lastActive: new Date().toISOString(),
+        });
+      }
     });
   });
 };

@@ -1,8 +1,10 @@
+import { chatSocket } from './chat';
 import {setupNotificationSocket} from './notification';
-import {chatSocket} from './chat';
+import {botSocket} from './bot';
 
 
 export {
   setupNotificationSocket,
-	chatSocket
+	botSocket,
+	chatSocket,
 }

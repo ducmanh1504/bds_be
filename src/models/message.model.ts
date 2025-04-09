@@ -13,6 +13,7 @@ import BaseModel from './base.model';
 @Table({
   tableName: 'messages',
   timestamps: true,
+	underscored: true 
 })
 export default class Message extends BaseModel<string> {
   @ForeignKey(() => User)
@@ -33,6 +34,10 @@ export default class Message extends BaseModel<string> {
   @Default(false)
   @Column(DataType.BOOLEAN)
   isRead!: boolean; 
+
+	@Default({})
+  @Column(DataType.JSON)
+  reactions!: { [userId: string]: string } //{ "user1": "👍", "user2": "❤️" }
 
   @BelongsTo(() => User, { foreignKey: 'senderId', as: 'sender' })
   sender!: User;

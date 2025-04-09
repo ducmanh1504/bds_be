@@ -1,7 +1,7 @@
 
-import { Table, Column, DataType, BeforeUpdate, Default, AllowNull, HasMany,BeforeCreate } from 'sequelize-typescript';
+import { Table, Column, DataType, BeforeUpdate, Default, AllowNull, HasMany, BeforeCreate } from 'sequelize-typescript';
 import { Post, PostDraft, Transaction, Comment, Rating, Wishlist, Report, Notification, News, CommentLike } from '@models';
-import { Roles } from './enums';
+import { Roles, Gender } from './enums';
 import BaseModel from './base.model';
 import bcrypt from 'bcrypt';
 
@@ -34,7 +34,28 @@ export default class User extends BaseModel<string> {
 	})
 	phone!: string;
 	
-	
+	//column status active message
+
+	@Default(false)
+  @Column(DataType.BOOLEAN)
+  active!: boolean;
+
+	@Column({ type: DataType.DATE, defaultValue: null })
+  lastActive!: Date | null;
+
+  @Default(null)
+  @Column(DataType.STRING)
+  address!: string;
+
+  @AllowNull(false)
+  @Default(Gender.Other)
+  @Column({ type: DataType.ENUM(...Object.values(Gender)) })
+  gender!: Gender;
+
+  @AllowNull(true)
+  @Column(DataType.DATE)
+  dateOfBirth!: Date;
+
 
   @AllowNull(false)
   @Column(DataType.STRING)
